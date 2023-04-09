@@ -8,5 +8,5 @@ class Competition(Base):
     __tablename__ = "d_Competition"
 
     CompetitionID: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    CompetitionDistance: Mapped[int] = mapped_column()
+    CompetitionDistance: Mapped[int] = mapped_column(nullable=True)
     OpenSinceMonthYear: Mapped[str] = mapped_column(String(50), nullable=True)
