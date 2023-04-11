@@ -1,4 +1,4 @@
 SQLAlchemy
 python-dotenv
 pyodbc
-pscopg2-binary
+psycopg2-binary

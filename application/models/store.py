@@ -1,3 +1,5 @@
+from typing import Optional
+
 from sqlalchemy import String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,3 +20,7 @@ class Store(Base):
 
     Promotion2: Mapped["Promotion2"] = relationship()
     Competition: Mapped["Competition"] = relationship()
+
+    @classmethod
+    def find_by_business_key(cls, store_nr: str) -> Optional["Store"]:
+        return cls.query.filter(cls.StoreNr == store_nr).first()

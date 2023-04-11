@@ -5,7 +5,7 @@ from datetime import date
 from sqlalchemy import text, desc
 from sqlalchemy.orm import Session
 
-from application.database import Base, engine
+from application.database import Base, engine, db_session
 from application.models.competition import Competition
 from application.models.date import Date
 from application.models.open import Open
@@ -65,57 +65,62 @@ def pre_process():
 def extract():
     """Extract stage."""
 
-    logging.info("Starting extract stage...")
+    logging.info("Starting extract stage ...")
 
-    with Session(engine) as session:
-        # Extract store.csv
-        with open("store.csv", newline="") as f:
-            store_reader = csv.reader(f)
-            next(store_reader)
-            for row in store_reader:
-                store = StagingStoreCur(
-                    Store=int(row[0]),
-                    StoreType=row[1],
-                    Assortment=row[2],
-                    CompetitionDistance=int(row[3]) if row[3] else None,
-                    CompetitionOpenSinceMonth=int(row[4]) if row[4] else None,
-                    CompetitionOpenSinceYear=int(row[5]) if row[5] else None,
-                    Promo2=bool(row[6]),
-                    Promo2SinceWeek=int(row[7]) if row[7] else None,
-                    Promo2SinceYear=int(row[8]) if row[8] else None,
-                    PromoInterval=row[9] if row[9] else None
-                )
-                session.add(store)
-            session.commit()
+    # Extract store.csv
+    with open("store.csv", newline="") as f:
+        logging.info("Processing store.csv")
+        store_reader = csv.reader(f)
+        next(store_reader)
+        for index, row in enumerate(store_reader):
+            logging.debug("Processing row %s of store.csv", index)
+            store = StagingStoreCur(
+                Store=int(row[0]),
+                StoreType=row[1],
+                Assortment=row[2],
+                CompetitionDistance=int(row[3]) if row[3] else None,
+                CompetitionOpenSinceMonth=int(row[4]) if row[4] else None,
+                CompetitionOpenSinceYear=int(row[5]) if row[5] else None,
+                Promo2=bool(row[6]),
+                Promo2SinceWeek=int(row[7]) if row[7] else None,
+                Promo2SinceYear=int(row[8]) if row[8] else None,
+                PromoInterval=row[9] if row[9] else None
+            )
+            db_session.add(store)
+        db_session.commit()
 
-        # Extract train_large.csv
-        with open("train.csv") as f:
-            train_reader = csv.reader(f)
-            next(train_reader)
-            for row in train_reader:
-                train = StagingTrainCur(
-                    Store=int(row[0]),
-                    DayOfWeek=int(row[1]),
-                    Date=date.fromisoformat(row[2]),
-                    Sales=int(row[3]),
-                    Customers=int(row[4]),
-                    Open=bool(row[5]),
-                    Promo=bool(row[6]),
-                    StateHoliday=bool(row[7]),
-                    SchoolHoliday=bool(row[8]),
-                )
-                session.add(train)
-            session.commit()
+    # Extract train_large.csv
+    with open("train.csv") as f:
+        logging.info("Processing train.csv")
+        train_reader = csv.reader(f)
+        next(train_reader)
+        for index, row in enumerate(train_reader):
+            logging.debug("Processing row %s of train.csv", index)
+            train = StagingTrainCur(
+                Store=int(row[0]),
+                DayOfWeek=int(row[1]),
+                Date=date.fromisoformat(row[2]),
+                Sales=int(row[3]),
+                Customers=int(row[4]),
+                Open=bool(row[5]),
+                Promo=bool(row[6]),
+                StateHoliday=bool(row[7]),
+                SchoolHoliday=bool(row[8]),
+            )
+            db_session.add(train)
+        db_session.commit()
 
         # Source and Stage store
+        logging.info("Source and stage store")
         StagingStore.__table__.drop(engine)
-        session.execute(text("SELECT * INTO sta_store FROM sta_store_cur EXCEPT SELECT * FROM sta_store_prev;"))
-        session.commit()
+        db_session.execute(text("SELECT * INTO sta_store FROM sta_store_cur EXCEPT SELECT * FROM sta_store_prev;"))
+        db_session.commit()
 
         # Source and Stage train
+        logging.info("Source and stage train")
         StagingTrain.__table__.drop(engine)
-        session.execute(text("SELECT * INTO sta_train FROM sta_train_cur EXCEPT SELECT * FROM sta_train_prev;"))
-        session.commit()
+        db_session.execute(text("SELECT * INTO sta_train FROM sta_train_cur EXCEPT SELECT * FROM sta_train_prev;"))
+        db_session.commit()
 
     logging.info("Extract stage done.")
 
@@ -125,7 +130,52 @@ def transform():
 
     logging.info("Starting transform stage...")
 
-    # TODO
+    logging.info("Transform store data...")
+    rows = db_session.query(StagingStore).all()
+    count = len(rows)
+    for index, row in enumerate(rows):
+        logging.debug("Transforming %s from %s", index, count)
+
+        # Transform Promo2 to boolean
+        row.Promo2 = bool(row.Promo2)
+
+        # Transform Promo2SinceYear and Promo2SinceWeek to Promo2SinceWeekYear
+        if row.Promo2SinceYear and row.Promo2SinceWeek:
+            row.Promo2SinceWeekYear = f"{row.Promo2SinceYear}W{row.Promo2SinceWeek}"
+
+        # Transform CompetitionDistance to postive integer
+        if row.CompetitionDistance and int(row.CompetitionDistance) > 0:
+            row.CompetitionDistance = int(row.CompetitionDistance)
+        else:
+            row.CompetitionDistance = None
+
+        # Transform CompetitionOpenSinceMonth and CompetitionOpenSinceYear to CompetitionOpenSinceMonthYear
+        if row.CompetitionOpenSinceMonth and row.CompetitionOpenSinceYear:
+            row.CompetitionOpenSinceMonthYear = f"{row.CompetitionOpenSinceYear}-{row.CompetitionOpenSinceMonth}"
+
+        # Transform Store to
+        row.Store = int(row.Store)
+
+        # Transform StoreType to stripped string
+        row.StoreType = str(row.StoreType).strip()
+
+        # Transform Assortment to stripped string
+        row.Assortment = str(row.Assortment).strip()
+
+        db_session.merge(row)
+    db_session.commit()
+
+    logging.info("Transform train data...")
+    rows = db_session.query(StagingTrain).all()
+    count = len(rows)
+    for index, row in enumerate(rows):
+        logging.debug("Transforming %s from %s", index, count)
+
+        # Transform Day, Month, Year, Week, Quarter, DayOfWeek
+        # TODO:
+
+        db_session.merge(row)
+    db_session.commit()
 
     logging.info("Transform stage done.")
 
@@ -136,10 +186,15 @@ def load():
     logging.info("Starting load stage...")
 
     with Session(engine) as session:
-        for row in session.query(StagingStore).all():
+        logging.info("Load staged store data...")
+        rows = session.query(StagingStore).all()
+        count = len(rows)
+        for index, row in enumerate(rows):
+            logging.debug("Loading %s from %s", index, count)
+
             # Load Promotion2 (SCD Type 2)
-            is_promotion = bool(row.Promo2)
-            since_week_year = f"{row.Promo2SinceYear}W{row.Promo2SinceWeek}"
+            is_promotion = row.Promo2
+            since_week_year = row.Promo2SinceWeekYear
             interval = row.PromoInterval
             promotion2 = session.query(Promotion2).filter(
                     Promotion2.IsPromotion == is_promotion,
@@ -157,13 +212,9 @@ def load():
                 session.commit()
 
             # Load Competition (SCD Type 2)
-            competition_distance = None
-            if row.CompetitionDistance and int(row.CompetitionDistance) > 0:
-                competition_distance = int(row.CompetitionDistance)
+            competition_distance = row.CompetitionDistance
 
-            open_since_month_year = None
-            if row.CompetitionOpenSinceMonth and row.CompetitionOpenSinceYear:
-                open_since_month_year = f"{row.CompetitionOpenSinceYear}-{row.CompetitionOpenSinceMonth}"
+            open_since_month_year = row.CompetitionOpenSinceMonthYear
             competition = session.query(Competition).filter(
                 Competition.CompetitionDistance == competition_distance,
                 Competition.OpenSinceMonthYear == open_since_month_year
@@ -178,9 +229,9 @@ def load():
                 session.commit()
 
             # Load Store (SCD Type 2)
-            store_nr = int(row.Store)
-            store_type = str(row.StoreType).strip()
-            assortment = str(row.Assortment).strip()
+            store_nr = row.Store
+            store_type = row.StoreType
+            assortment = row.Assortment
             store = session.query(Store).filter(
                 Store.StoreNr == store_nr,
                 Store.StoreType == store_type,
@@ -198,7 +249,12 @@ def load():
                 session.add(store)
                 session.commit()
 
-        for row in session.query(StagingTrain).all():
+        logging.info("Load staged train data...")
+        rows = session.query(StagingTrain).all()
+        count = len(rows)
+        for index, row in enumerate(rows):
+            logging.debug("Loading %s from %s", index, count)
+
             # Load Date (No SCD)
             if row.Date:
                 day = row.Date.day
@@ -290,18 +346,23 @@ def post_process():
     """Post-processing stage."""
     logging.info("Starting post-processing...")
 
+    with engine.connect() as connection:
+        dialect = connection.dialect.name
+
     with Session(engine) as session:
         # Drop sta_store_prev
         StagingStorePrev.__table__.drop(engine)
 
-        # Copy sta_store_cur to sta_store_prev
-        session.execute(text(f"EXEC sp_rename 'sta_store_cur', 'sta_store_prev';"))
+        if dialect == "mssql":
+            # Copy sta_store_cur to sta_store_prev
+            session.execute(text(f"EXEC sp_rename 'sta_store_cur', 'sta_store_prev';"))
 
         # Drop sta_train_prev
         StagingTrainPrev.__table__.drop(engine)
 
-        # Copy sta_train_cur to sta_train_prev
-        session.execute(text(f"EXEC sp_rename 'sta_train_cur', 'sta_train_prev';"))
+        if dialect == "mssql":
+            # Copy sta_train_cur to sta_train_prev
+            session.execute(text(f"EXEC sp_rename 'sta_train_cur', 'sta_train_prev';"))
 
         session.commit()
 

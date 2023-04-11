@@ -18,6 +18,9 @@ class _StagingStore(Base):
     Promo2SinceYear: Mapped[int] = mapped_column(nullable=True)
     PromoInterval: Mapped[str] = mapped_column(nullable=True)
 
+    Promo2SinceWeekYear: Mapped[str] = mapped_column(nullable=True)
+    CompetitionOpenSinceMonthYear: Mapped[str] = mapped_column(nullable=True)
+
 
 class StagingStore(_StagingStore):
     __tablename__ = "sta_store"
