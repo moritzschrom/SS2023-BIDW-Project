@@ -171,8 +171,25 @@ def transform():
     for index, row in enumerate(rows):
         logging.debug("Transforming %s from %s", index, count)
 
-        # Transform Day, Month, Year, Week, Quarter, DayOfWeek
-        # TODO:
+        # Transform Date to Day, Year, Week, Quarter, DayOfWeek
+        if row.Date:
+            row.Day = row.Date.day
+            row.Month = row.Date.month
+            row.Year = row.Date.year
+            row.Week = row.Date.isocalendar()[1]
+            # Get the quarter of the year
+            row.Quarter = (row.Date.month - 1) // 3 + 1
+            # Get the day of the week (0 is Monday, 6 is Sunday)
+            row.DayOfWeek = row.Date.weekday()
+
+        # Transform SchoolHoliday to boolean
+        row.SchoolHoliday = bool(row.SchoolHoliday)
+
+        # Transform Promo to boolean
+        row.Promo = bool(row.Promo)
+
+        # Transform Open to boolean
+        row.Open = bool(row.Open)
 
         db_session.merge(row)
     db_session.commit()
@@ -256,15 +273,12 @@ def load():
             logging.debug("Loading %s from %s", index, count)
 
             # Load Date (No SCD)
-            if row.Date:
-                day = row.Date.day
-                month = row.Date.month
-                year = row.Date.year
-                week = row.Date.isocalendar()[1]
-                # Get the quarter of the year
-                quarter = (row.Date.month - 1) // 3 + 1
-                # Get the day of the week (0 is Monday, 6 is Sunday)
-                day_of_week = row.Date.weekday()
+            day = row.Day
+            month = row.Month
+            year = row.Year
+            week = row.Week
+            quarter = row.Quarter
+            day_of_week = row.DayOfWeek
             _date = session.query(Date).filter(
                 Date.Day == day,
                 Date.Month == month,
@@ -286,7 +300,7 @@ def load():
                 session.commit()
 
             # Load SchoolHoliday (No SCD)
-            is_school_holiday = bool(row.SchoolHoliday)
+            is_school_holiday = row.SchoolHoliday
             school_holiday = session.query(SchoolHoliday).filter(
                 SchoolHoliday.IsSchoolHoliday == is_school_holiday
             ).first()
@@ -298,7 +312,7 @@ def load():
                 session.commit()
 
             # Load Promotion (No SCD)
-            is_promotion = bool(row.Promo)
+            is_promotion = row.Promo
             promotion = session.query(Promotion).filter(
                 Promotion.IsPromotion == is_promotion
             ).first()
@@ -310,7 +324,7 @@ def load():
                 session.commit()
 
             # Load Open (No SCD)
-            is_open = bool(row.Open)
+            is_open = row.Open
             _open = session.query(Open).filter(
                 Open.IsOpen == is_open
             ).first()

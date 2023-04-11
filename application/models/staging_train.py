@@ -19,6 +19,14 @@ class _StagingTrain(Base):
     StateHoliday: Mapped[bool] = mapped_column()
     SchoolHoliday: Mapped[bool] = mapped_column()
 
+    # Transformed columns
+    Day: Mapped[int] = mapped_column(nullable=True)
+    Month: Mapped[int] = mapped_column(nullable=True)
+    Year: Mapped[int] = mapped_column(nullable=True)
+    Week: Mapped[int] = mapped_column(nullable=True)
+    Quarter: Mapped[int] = mapped_column(nullable=True)
+    DayOfWeek: Mapped[int] = mapped_column(nullable=True)
+
 
 class StagingTrain(_StagingTrain):
     __tablename__ = "sta_train"
