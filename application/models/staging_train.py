@@ -25,7 +25,7 @@ class _StagingTrain(Base):
     Year: Mapped[int] = mapped_column(nullable=True)
     Week: Mapped[int] = mapped_column(nullable=True)
     Quarter: Mapped[int] = mapped_column(nullable=True)
-    DayOfWeek: Mapped[int] = mapped_column(nullable=True)
+    DayOfWeekTransformed: Mapped[int] = mapped_column(nullable=True)
 
 
 class StagingTrain(_StagingTrain):

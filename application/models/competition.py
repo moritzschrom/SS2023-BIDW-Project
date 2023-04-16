@@ -3,7 +3,7 @@ from typing import Optional
 from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from application.database import Base
+from application.database import Base, db_session
 
 
 class Competition(Base):
@@ -15,7 +15,7 @@ class Competition(Base):
 
     @classmethod
     def find_by_business_key(cls, competition_distance: int, open_since_month_year: str) -> Optional["Competition"]:
-        return cls.query.filter(
+        return db_session.query(cls).filter(
             cls.CompetitionDistance == competition_distance,
             cls.OpenSinceMonthYear == open_since_month_year
         ).first()

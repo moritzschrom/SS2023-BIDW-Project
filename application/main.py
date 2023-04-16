@@ -1,6 +1,6 @@
 import logging
 import csv
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import text, desc
 from sqlalchemy.orm import Session
@@ -43,21 +43,20 @@ def pre_process():
 
     logging.info("Starting pre-processing stage...")
 
-    with Session(engine) as session:
-        # Truncate sta_store
-        session.query(StagingStore).delete()
+    # Truncate sta_store
+    db_session.query(StagingStore).delete()
 
-        # Truncate sta_store_cur
-        session.query(StagingStoreCur).delete()
+    # Truncate sta_store_cur
+    db_session.query(StagingStoreCur).delete()
 
-        # Truncate sta_train
-        session.query(StagingTrain).delete()
+    # Truncate sta_train
+    db_session.query(StagingTrain).delete()
 
-        # Truncate sta_train_cur
-        session.query(StagingTrainCur).delete()
+    # Truncate sta_train_cur
+    db_session.query(StagingTrainCur).delete()
 
-        # Commit changes
-        session.commit()
+    # Commit changes
+    db_session.commit()
 
     logging.info("Pre-processing stage done.")
 
@@ -81,7 +80,7 @@ def extract():
                 CompetitionDistance=int(row[3]) if row[3] else None,
                 CompetitionOpenSinceMonth=int(row[4]) if row[4] else None,
                 CompetitionOpenSinceYear=int(row[5]) if row[5] else None,
-                Promo2=bool(row[6]),
+                Promo2=bool(int(row[6])),
                 Promo2SinceWeek=int(row[7]) if row[7] else None,
                 Promo2SinceYear=int(row[8]) if row[8] else None,
                 PromoInterval=row[9] if row[9] else None
@@ -102,8 +101,8 @@ def extract():
                 Date=date.fromisoformat(row[2]),
                 Sales=int(row[3]),
                 Customers=int(row[4]),
-                Open=bool(row[5]),
-                Promo=bool(row[6]),
+                Open=bool(int(row[5])),
+                Promo=bool(int(row[6])),
                 StateHoliday=bool(row[7]),
                 SchoolHoliday=bool(row[8]),
             )
@@ -163,7 +162,7 @@ def transform():
         row.Assortment = str(row.Assortment).strip()
 
         db_session.merge(row)
-    db_session.commit()
+        db_session.commit()
 
     logging.info("Transform train data...")
     rows = db_session.query(StagingTrain).all()
@@ -180,7 +179,11 @@ def transform():
             # Get the quarter of the year
             row.Quarter = (row.Date.month - 1) // 3 + 1
             # Get the day of the week (0 is Monday, 6 is Sunday)
-            row.DayOfWeek = row.Date.weekday()
+            row.DayOfWeekTransformed = row.Date.weekday()
+
+        # Screen DayOfWeek
+        if row.DayOfWeekTransformed + 1 is not row.DayOfWeek:
+            logging.error("Screen failed. Transformed day of week %s does not match loaded day of week %s.", row.DayOfWeekTransformed, row.DayOfWeek)
 
         # Transform SchoolHoliday to boolean
         row.SchoolHoliday = bool(row.SchoolHoliday)
@@ -191,7 +194,14 @@ def transform():
         # Transform Open to boolean
         row.Open = bool(row.Open)
 
+        # Screen Sales
+        if 0 < row.Sales < 50:
+            logging.error("Screen failed. Low sales %s occured. Please revisit the data.", row.Sales)
+        if row.Sales > 40000:
+            logging.error("Screen failed. High sales %s occured. Please revisit the data.", row.Sales)
         db_session.merge(row)
+
+        db_session.flush()
     db_session.commit()
 
     logging.info("Transform stage done.")
@@ -202,156 +212,153 @@ def load():
 
     logging.info("Starting load stage...")
 
-    with Session(engine) as session:
-        logging.info("Load staged store data...")
-        rows = session.query(StagingStore).all()
-        count = len(rows)
-        for index, row in enumerate(rows):
-            logging.debug("Loading %s from %s", index, count)
+    logging.info("Load staged store data...")
+    rows = db_session.query(StagingStore).all()
+    count = len(rows)
+    for index, row in enumerate(rows):
+        logging.debug("Loading %s from %s", index, count)
 
-            # Load Promotion2 (SCD Type 2)
-            is_promotion = row.Promo2
-            since_week_year = row.Promo2SinceWeekYear
-            interval = row.PromoInterval
-            promotion2 = session.query(Promotion2).filter(
-                    Promotion2.IsPromotion == is_promotion,
-                    Promotion2.SinceWeekYear == since_week_year,
-                    Promotion2.Interval == interval
-            ).first()
-            if not promotion2:
-                # If there is no matching Promotion2, create a new entry
-                promotion2 = Promotion2(
-                    IsPromotion=is_promotion,
-                    SinceWeekYear=since_week_year,
-                    Interval=interval,
-                )
-                session.add(promotion2)
-                session.commit()
-
-            # Load Competition (SCD Type 2)
-            competition_distance = row.CompetitionDistance
-
-            open_since_month_year = row.CompetitionOpenSinceMonthYear
-            competition = session.query(Competition).filter(
-                Competition.CompetitionDistance == competition_distance,
-                Competition.OpenSinceMonthYear == open_since_month_year
-            ).first()
-            if not competition:
-                # If there is no matching Competition, create a new entry
-                competition = Competition(
-                    CompetitionDistance=competition_distance,
-                    OpenSinceMonthYear=open_since_month_year
-                )
-                session.add(competition)
-                session.commit()
-
-            # Load Store (SCD Type 2)
-            store_nr = row.Store
-            store_type = row.StoreType
-            assortment = row.Assortment
-            store = session.query(Store).filter(
-                Store.StoreNr == store_nr,
-                Store.StoreType == store_type,
-                Store.Assortment == assortment
-            ).first()
-            if not store:
-                # If there is no matching Store, create a new entry
-                store = Store(
-                    Promotion2ID=promotion2.Promotion2ID,
-                    CompetitionID=competition.CompetitionID,
-                    StoreType=store_type,
-                    Assortment=assortment,
-                    StoreNr=store_nr
-                )
-                session.add(store)
-                session.commit()
-
-        logging.info("Load staged train data...")
-        rows = session.query(StagingTrain).all()
-        count = len(rows)
-        for index, row in enumerate(rows):
-            logging.debug("Loading %s from %s", index, count)
-
-            # Load Date (No SCD)
-            day = row.Day
-            month = row.Month
-            year = row.Year
-            week = row.Week
-            quarter = row.Quarter
-            day_of_week = row.DayOfWeek
-            _date = session.query(Date).filter(
-                Date.Day == day,
-                Date.Month == month,
-                Date.Year == year,
-                Date.Week == week,
-                Date.Quarter == quarter,
-                Date.DayOfWeek == day_of_week
-            ).first()
-            if not _date:
-                _date = Date(
-                    Day=day,
-                    Month=month,
-                    Year=year,
-                    Week=week,
-                    Quarter=quarter,
-                    DayOfWeek=day_of_week
-                )
-                session.add(_date)
-                session.commit()
-
-            # Load SchoolHoliday (No SCD)
-            is_school_holiday = row.SchoolHoliday
-            school_holiday = session.query(SchoolHoliday).filter(
-                SchoolHoliday.IsSchoolHoliday == is_school_holiday
-            ).first()
-            if not school_holiday:
-                school_holiday = SchoolHoliday(
-                    IsSchoolHoliday=is_school_holiday
-                )
-                session.add(school_holiday)
-                session.commit()
-
-            # Load Promotion (No SCD)
-            is_promotion = row.Promo
-            promotion = session.query(Promotion).filter(
-                Promotion.IsPromotion == is_promotion
-            ).first()
-            if not promotion:
-                promotion = Promotion(
-                    IsPromotion=is_promotion
-                )
-                session.add(promotion)
-                session.commit()
-
-            # Load Open (No SCD)
-            is_open = row.Open
-            _open = session.query(Open).filter(
-                Open.IsOpen == is_open
-            ).first()
-            if not _open:
-                _open = Open(
-                    IsOpen=is_open
-                )
-                session.add(_open)
-                session.commit()
-
-            # Load StoreSales Fact (No SCD)
-            store = session.query(Store).filter(
-                Store.StoreNr == row.Store
-            ).order_by(desc(Store.StoreID)).first()
-            if not store:
-                continue
-            store_sales = StoreSales(
-                StoreID=store.StoreID,
-                DateID=_date.DateID,
-                OpenID=_open.OpenID,
-                PromotionID=promotion.PromotionID,
-                SchoolHolidayID=school_holiday.SchoolHolidayID,
-                Sales=row.Sales,
-                Customers=row.Customers
+        # Load Promotion2 (SCD Type 2)
+        is_promotion = row.Promo2
+        since_week_year = row.Promo2SinceWeekYear
+        interval = row.PromoInterval
+        promotion2 = db_session.query(Promotion2).filter(
+                Promotion2.IsPromotion == is_promotion,
+                Promotion2.SinceWeekYear == since_week_year,
+                Promotion2.Interval == interval
+        ).first()
+        if not promotion2:
+            # If there is no matching Promotion2, create a new entry
+            promotion2 = Promotion2(
+                IsPromotion=is_promotion,
+                SinceWeekYear=since_week_year,
+                Interval=interval,
             )
-            session.add(store_sales)
-            session.commit()
+            db_session.add(promotion2)
+            db_session.flush()
+
+        # Load Competition (SCD Type 2)
+        competition_distance = row.CompetitionDistance
+
+        open_since_month_year = row.CompetitionOpenSinceMonthYear
+        competition = Competition.find_by_business_key(competition_distance, open_since_month_year)
+        if not competition:
+            # If there is no matching Competition, create a new entry
+            competition = Competition(
+                CompetitionDistance=competition_distance,
+                OpenSinceMonthYear=open_since_month_year
+            )
+            db_session.add(competition)
+            db_session.flush()
+
+        # Load Store (SCD Type 2)
+        store_nr = row.Store
+        store_type = row.StoreType
+        assortment = row.Assortment
+        store = Store.find_by_business_key(store_nr)
+        if not store:
+            # If there is no matching Store, create a new entry
+            store = Store(
+                Promotion2ID=promotion2.Promotion2ID,
+                CompetitionID=competition.CompetitionID,
+                StoreType=store_type,
+                Assortment=assortment,
+                StoreNr=store_nr,
+            )
+            db_session.add(store)
+            db_session.flush()
+    db_session.commit()
+
+    logging.info("Load staged train data...")
+    rows = db_session.query(StagingTrain).all()
+    count = len(rows)
+    for index, row in enumerate(rows):
+        logging.debug("Loading %s from %s", index, count)
+
+        # Load Date (No SCD)
+        _datetime = row.Date
+        day = row.Day
+        month = row.Month
+        year = row.Year
+        week = row.Week
+        quarter = row.Quarter
+        day_of_week = row.DayOfWeekTransformed
+        _date = db_session.query(Date).filter(
+            Date.Date == _datetime,
+            Date.Day == day,
+            Date.Month == month,
+            Date.Year == year,
+            Date.Week == week,
+            Date.Quarter == quarter,
+            Date.DayOfWeek == day_of_week
+        ).first()
+        if not _date:
+            _date = Date(
+                Date=_datetime,
+                Day=day,
+                Month=month,
+                Year=year,
+                Week=week,
+                Quarter=quarter,
+                DayOfWeek=day_of_week
+            )
+            db_session.add(_date)
+            db_session.flush()
+
+        # Load SchoolHoliday (No SCD)
+        is_school_holiday = row.SchoolHoliday
+        school_holiday = db_session.query(SchoolHoliday).filter(
+            SchoolHoliday.IsSchoolHoliday == is_school_holiday
+        ).first()
+        if not school_holiday:
+            school_holiday = SchoolHoliday(
+                IsSchoolHoliday=is_school_holiday
+            )
+            db_session.add(school_holiday)
+            db_session.flush()
+
+        # Load Promotion (No SCD)
+        is_promotion = row.Promo
+        promotion = db_session.query(Promotion).filter(
+            Promotion.IsPromotion == is_promotion
+        ).first()
+        if not promotion:
+            promotion = Promotion(
+                IsPromotion=is_promotion
+            )
+            db_session.add(promotion)
+            db_session.flush()
+
+        # Load Open (No SCD)
+        is_open = row.Open
+        _open = db_session.query(Open).filter(
+            Open.IsOpen == is_open
+        ).first()
+        if not _open:
+            _open = Open(
+                IsOpen=is_open
+            )
+            db_session.add(_open)
+            db_session.flush()
+
+        # Load StoreSales Fact (No SCD)
+        store = db_session.query(Store).filter(
+            Store.StoreNr == row.Store
+        ).order_by(desc(Store.StoreID)).first()
+        if not store:
+            continue
+        store_sales = StoreSales(
+            StoreID=store.StoreID,
+            DateID=_date.DateID,
+            OpenID=_open.OpenID,
+            PromotionID=promotion.PromotionID,
+            SchoolHolidayID=school_holiday.SchoolHolidayID,
+            Sales=row.Sales,
+            Customers=row.Customers
+        )
+        db_session.add(store_sales)
+        db_session.flush()
+    db_session.commit()
 
     logging.info("Load stage done.")
 
@@ -363,22 +370,21 @@ def post_process():
     with engine.connect() as connection:
         dialect = connection.dialect.name
 
-    with Session(engine) as session:
-        # Drop sta_store_prev
-        StagingStorePrev.__table__.drop(engine)
+    # Drop sta_store_prev
+    StagingStorePrev.__table__.drop(engine)
 
-        if dialect == "mssql":
-            # Copy sta_store_cur to sta_store_prev
-            session.execute(text(f"EXEC sp_rename 'sta_store_cur', 'sta_store_prev';"))
+    if dialect == "mssql":
+        # Copy sta_store_cur to sta_store_prev
+        db_session.execute(text(f"EXEC sp_rename 'sta_store_cur', 'sta_store_prev';"))
 
-        # Drop sta_train_prev
-        StagingTrainPrev.__table__.drop(engine)
+    # Drop sta_train_prev
+    StagingTrainPrev.__table__.drop(engine)
 
-        if dialect == "mssql":
-            # Copy sta_train_cur to sta_train_prev
-            session.execute(text(f"EXEC sp_rename 'sta_train_cur', 'sta_train_prev';"))
+    if dialect == "mssql":
+        # Copy sta_train_cur to sta_train_prev
+        db_session.execute(text(f"EXEC sp_rename 'sta_train_cur', 'sta_train_prev';"))
 
-        session.commit()
+    db_session.commit()
 
     logging.info("Post-processing done.")
 

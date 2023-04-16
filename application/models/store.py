@@ -3,7 +3,7 @@ from typing import Optional
 from sqlalchemy import String, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from application.database import Base
+from application.database import Base, db_session
 from application.models.promotion2 import Promotion2
 from application.models.competition import Competition
 
@@ -23,4 +23,4 @@ class Store(Base):
 
     @classmethod
     def find_by_business_key(cls, store_nr: str) -> Optional["Store"]:
-        return cls.query.filter(cls.StoreNr == store_nr).first()
+        return db_session.query(cls).filter(cls.StoreNr == store_nr).first()
